@@ -44,11 +44,18 @@
  * alone is insufficient. See docs/mt7921.md and mt7921_capture.c for the
  * handoff contract and mt7921_frame.c for the resulting event format.
  */
+#if defined(_WIN32)
+#define _CRT_RAND_S
+#endif
 #include "mt7921.h"
 #include "mt7921_image.h"
-#include <fcntl.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <stdlib.h>
+#else
+#include <fcntl.h>
 #include <unistd.h>
+#endif
 
 /* Disable special endpoint-reset preservation so WFSYS reset restores the ROM
  * transport consistently. This register uses the USB host-wrapper request pair.
@@ -190,21 +197,40 @@ static int require_unpatched_rom(birriasdr_dev_t *dev)
     return status == 3 ? 0 : BIRRIASDR_ERROR_STATE;
 }
 
+/* Draw the boot challenge from the platform CSPRNG. Windows UCRT's rand_s
+ * wraps the system generator; POSIX systems expose it through /dev/urandom.
+ */
+static int make_nonce(uint32_t *nonce)
+{
+#if defined(_WIN32)
+    unsigned int value;
+    if (rand_s(&value))
+        return BIRRIASDR_ERROR_IO;
+    *nonce = (uint32_t)value;
+    return 0;
+#else
+    uint8_t bytes[4];
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    ssize_t count;
+    if (fd < 0)
+        return BIRRIASDR_ERROR_IO;
+    count = read(fd, bytes, sizeof(bytes));
+    close(fd);
+    if (count != (ssize_t)sizeof(bytes))
+        return BIRRIASDR_ERROR_IO;
+    *nonce = bs_get_le32(bytes);
+    return 0;
+#endif
+}
+
 /* Seed a fresh challenge so old mailbox contents and stale USB frames cannot
  * masquerade as execution of this run's original firmware.
  */
 static int initialize_mailbox(birriasdr_dev_t *dev, uint32_t packets)
 {
-    uint8_t nonce[4];
-    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
-    ssize_t count;
-    if (fd < 0)
-        return BIRRIASDR_ERROR_IO;
-    count = read(fd, nonce, sizeof(nonce));
-    close(fd);
-    if (count != sizeof(nonce))
-        return BIRRIASDR_ERROR_IO;
-    dev->nonce = bs_get_le32(nonce);
+    uint32_t nonce;
+    BS_TRY(make_nonce(&nonce));
+    dev->nonce = nonce;
     for (unsigned i = 0; i < 16; ++i) {
         uint32_t expected = i == 1 ? dev->nonce : i == 8 ? packets : 0;
         uint32_t actual;

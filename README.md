@@ -87,7 +87,7 @@ For more detail, see:
 | Host interface | Bulk transfers over USB 3.0 at about 161 MB/s |
 | Output format | Interleaved signed 16-bit I and Q (`cs16`). Buffers from the API are native-endian, and recorder files are little-endian |
 | Firmware | Original 1,632-byte RAM program. No vendor firmware and nothing flashed |
-| Host platforms | Linux, tested on a Raspberry Pi 5, and macOS, tested on an Apple Silicon Mac |
+| Host platforms | Linux, tested on a Raspberry Pi 5, and macOS, tested on an Apple Silicon Mac. The Windows build uses MSYS2 UCRT64, with hardware validation pending |
 
 ## Proof of concept
 
@@ -113,14 +113,30 @@ You need a C compiler, CMake and the libusb development files. On Debian or
 Ubuntu, install them with
 `sudo apt install build-essential cmake pkg-config libusb-1.0-0-dev`.
 On macOS with Homebrew, run `brew install cmake pkg-config libusb`.
+On Windows, use an MSYS2 UCRT64 shell with the UCRT64 GCC toolchain, CMake,
+Ninja and libusb installed.
+
+Configure the build for your platform:
 
 ```sh
+# Linux and macOS
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+# Windows (MSYS2 UCRT64)
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+```
+
+Then build, test and list devices:
+
+```sh
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 ./build/birria_rx --list
 ./build/birria_rx capture.cs16 8000000 manual
 ```
+
+The manually launched `test_recovery` helper needs POSIX process control, so it
+is not built on Windows.
 
 The last command records eight million complex samples from device 0 with fixed
 manual gain codes (LNA 2, filter stage 8, digital 0). Leave out `manual` to

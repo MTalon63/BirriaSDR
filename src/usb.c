@@ -5,12 +5,20 @@
  */
 #include "internal.h"
 #include <errno.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <wchar.h>
+#include <windows.h>
+#else
+#include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 /* Enumerate known identities without assuming identical RF wiring across boards. */
 static const struct bs_usb_id devices[] = {
@@ -150,10 +158,30 @@ int bs_usb_recover(birriasdr_dev_t *dev)
 
 /* Share the existing prototype's lock for the tested dongle. Additional devices
  * use bus/address locks; all locks are advisory alongside libusb's interface claim.
- * Refuse symlinks/nonregular files in the shared temporary directory.
+ * POSIX uses an flock()-ed regular file in the shared temporary directory. Windows
+ * uses a named mutex because the CRT has neither flock() nor symlink-safe open.
  */
 static int lock_device(birriasdr_dev_t *dev, const struct bs_usb_id *id, libusb_device *usb)
 {
+#if defined(_WIN32)
+    wchar_t name[64];
+    HANDLE mutex;
+    if (id->vid == 0x3574 && id->pid == 0x6211)
+        wcscpy(name, L"Local\\birriasdr-3574-6211.lock");
+    else
+        swprintf(name, sizeof(name) / sizeof(name[0]),
+                 L"Local\\birriasdr-%u-%u.lock",
+                 libusb_get_bus_number(usb), libusb_get_device_address(usb));
+    mutex = CreateMutexW(NULL, FALSE, name);
+    if (!mutex)
+        return BIRRIASDR_ERROR_ACCESS;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(mutex);
+        return BIRRIASDR_ERROR_BUSY;
+    }
+    dev->lock_handle = mutex;
+    return 0;
+#else
     char path[128];
     struct stat st;
     if (id->vid == 0x3574 && id->pid == 0x6211)
@@ -169,6 +197,7 @@ static int lock_device(birriasdr_dev_t *dev, const struct bs_usb_id *id, libusb_
     if (flock(dev->lock_fd, LOCK_EX | LOCK_NB))
         return errno == EWOULDBLOCK ? BIRRIASDR_ERROR_BUSY : BIRRIASDR_ERROR_ACCESS;
     return 0;
+#endif
 }
 
 /* mt76 assigns endpoint roles by descriptor order within the ff/ff/ff interface:
@@ -307,6 +336,15 @@ void bs_usb_close(birriasdr_dev_t *dev)
     }
     if (dev->usb)
         libusb_exit(dev->usb);
-    if (dev->lock_fd >= 0)
+#if defined(_WIN32)
+    if (dev->lock_handle) {
+        CloseHandle(dev->lock_handle);
+        dev->lock_handle = NULL;
+    }
+#else
+    if (dev->lock_fd >= 0) {
         close(dev->lock_fd);
+        dev->lock_fd = -1;
+    }
+#endif
 }

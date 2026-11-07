@@ -70,7 +70,11 @@ int birriasdr_open(birriasdr_dev_t **out, uint32_t index)
     dev = calloc(1, sizeof(*dev));
     if (!dev)
         return BIRRIASDR_ERROR_NO_MEMORY;
+#if defined(_WIN32)
+    dev->lock_handle = NULL;
+#else
     dev->lock_fd = -1;
+#endif
     dev->interface_number = -1;
     atomic_init(&dev->run_state, BS_IDLE);
     atomic_init(&dev->frequency, 0);

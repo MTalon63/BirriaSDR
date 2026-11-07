@@ -65,7 +65,11 @@ struct birriasdr_dev {
     libusb_context *usb;
     libusb_device_handle *handle;
     int interface_number;
-    int lock_fd;
+#if defined(_WIN32)
+    void *lock_handle; /* Named mutex; NULL when no lock is held. */
+#else
+    int lock_fd;       /* Advisory lock file descriptor. */
+#endif
     uint8_t ep_in, ep_command, ep_download;
     const struct bs_backend *backend;
     uint64_t min_frequency, max_frequency;

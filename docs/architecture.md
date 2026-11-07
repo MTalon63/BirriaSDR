@@ -206,7 +206,8 @@ cause a device source overrun. Separately, it stalls the application callback to
 fill the host queue. Each failure is followed by a finite read at an endpoint or
 the anchor, both on the original handle and after closing and reopening it. Its
 receiver is forked before libusb is opened, and the parent only sends pause and
-resume signals without ever touching USB. This test is also excluded from CTest.
+resume signals without ever touching USB. The test is POSIX-only, so Windows
+builds omit it. It is also excluded from CTest.
 Its `--run auto` mode additionally requires a gap callback followed by resumed
 data within the same public read. The separate `test_control_recovery --run`
 test injects host register-write errors during live gain and tuning changes and
