@@ -130,8 +130,64 @@ int bs_framer_finish(const struct bs_framer *framer, uint64_t expected)
  * Sign-extend and reorder to conventional native-endian I,Q without rescaling.
  * Validate the entire packet before making any part of it visible to a caller.
  */
+#if (defined(__x86_64__) || defined(__i386__)) && defined(__GNUC__)
+#include <immintrin.h>
+
+/* 8 words per iteration. The scalar version pinned a core at 80 MSps, which is what
+ * capped the Windows capture path; dispatching is runtime so non-AVX2 hosts still work. */
+__attribute__((target("avx2")))
+static int decode_iq_avx2(const uint8_t *raw, int16_t *iq, size_t samples)
+{
+    const __m256i bad_mask = _mm256_set1_epi32((int)0xc000c000u);
+    const __m256i low14 = _mm256_set1_epi32(0x3fff);
+    const __m256i bias = _mm256_set1_epi32(0x2000);
+    size_t n = 0;
+
+    for (; n + 8 <= samples; n += 8) {
+        __m256i v = _mm256_loadu_si256((const __m256i *)(const void *)(raw + n * 4));
+        __m256i bad = _mm256_and_si256(v, bad_mask);
+        if (!_mm256_testz_si256(bad, bad))
+            return BIRRIASDR_ERROR_PROTOCOL;
+    }
+    for (; n < samples; ++n)
+        if (bs_get_le32(raw + n * 4) & 0xc000c000u)
+            return BIRRIASDR_ERROR_PROTOCOL;
+
+    for (n = 0; n + 8 <= samples; n += 8) {
+        __m256i v = _mm256_loadu_si256((const __m256i *)(const void *)(raw + n * 4));
+        __m256i iv = _mm256_sub_epi32(_mm256_xor_si256(
+            _mm256_and_si256(_mm256_srli_epi32(v, 16), low14), bias), bias);
+        __m256i qv = _mm256_sub_epi32(_mm256_xor_si256(
+            _mm256_and_si256(v, low14), bias), bias);
+        __m256i lo = _mm256_unpacklo_epi32(iv, qv);
+        __m256i hi = _mm256_unpackhi_epi32(iv, qv);
+        _mm256_storeu_si256((__m256i *)(void *)(iq + n * 2), _mm256_packs_epi32(lo, hi));
+    }
+    for (; n < samples; ++n) {
+        uint32_t word = bs_get_le32(raw + n * 4);
+        iq[n * 2] = (int16_t)((int32_t)(((word >> 16) & 0x3fff) ^ 0x2000) - 0x2000);
+        iq[n * 2 + 1] = (int16_t)((int32_t)((word & 0x3fff) ^ 0x2000) - 0x2000);
+    }
+    return 0;
+}
+
+static int cpu_has_avx2(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        __builtin_cpu_init();
+        cached = __builtin_cpu_supports("avx2") ? 1 : 0;
+    }
+    return cached;
+}
+#endif
+
 int bs_decode_iq(const uint8_t *raw, int16_t *iq, size_t samples)
 {
+#if (defined(__x86_64__) || defined(__i386__)) && defined(__GNUC__)
+    if (cpu_has_avx2())
+        return decode_iq_avx2(raw, iq, samples);
+#endif
     for (size_t n = 0; n < samples; ++n)
         if (bs_get_le32(raw + n * 4) & 0xc000c000u)
             return BIRRIASDR_ERROR_PROTOCOL;
