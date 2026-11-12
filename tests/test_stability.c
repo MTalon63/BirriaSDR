@@ -23,7 +23,11 @@
  */
 #include "birriasdr.h"
 #include <inttypes.h>
+#if defined(_MSC_VER)
+#include "../src/win32_thread.h"
+#else
 #include <pthread.h>
+#endif
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>

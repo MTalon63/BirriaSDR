@@ -4,6 +4,9 @@
 #include "internal.h"
 #include <errno.h>
 #include <time.h>
+#if defined(_MSC_VER)
+#include <windows.h>
+#endif
 
 /* Explicit byte assembly keeps protocol access safe on unaligned/big-endian hosts. */
 uint32_t bs_get_le32(const uint8_t *p)
@@ -28,16 +31,29 @@ void bs_put_le16(uint8_t *p, uint16_t value)
 /* Hardware deadlines use a monotonic clock so wall-clock adjustments are harmless. */
 uint64_t bs_now_ns(void)
 {
+#if defined(_MSC_VER)
+    LARGE_INTEGER frequency, counter;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&counter);
+    return (uint64_t)(counter.QuadPart / frequency.QuadPart) * UINT64_C(1000000000) +
+           (uint64_t)(counter.QuadPart % frequency.QuadPart) * UINT64_C(1000000000) /
+               (uint64_t)frequency.QuadPart;
+#else
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (uint64_t)t.tv_sec * UINT64_C(1000000000) + (uint64_t)t.tv_nsec;
+#endif
 }
 
 /* Preserve settling delays when a process receives a signal. */
 void bs_sleep_us(unsigned us)
 {
+#if defined(_MSC_VER)
+    Sleep(us / 1000u ? us / 1000u : (us ? 1u : 0u));
+#else
     struct timespec t = {(time_t)(us / 1000000u), (long)(us % 1000000u) * 1000};
     while (nanosleep(&t, &t) < 0 && errno == EINTR) {}
+#endif
 }
 
 /* Dispatch one register read through the selected transport/test harness. */

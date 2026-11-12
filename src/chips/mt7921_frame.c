@@ -132,10 +132,17 @@ int bs_framer_finish(const struct bs_framer *framer, uint64_t expected)
  */
 #if (defined(__x86_64__) || defined(__i386__)) && defined(__GNUC__)
 #include <immintrin.h>
+#define BS_AVX2_TARGET __attribute__((target("avx2")))
+#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+#include <immintrin.h>
+#include <intrin.h>
+#define BS_AVX2_TARGET
+#endif
 
+#if defined(BS_AVX2_TARGET)
 /* 8 words per iteration. The scalar version pinned a core at 80 MSps, which is what
  * capped the Windows capture path; dispatching is runtime so non-AVX2 hosts still work. */
-__attribute__((target("avx2")))
+BS_AVX2_TARGET
 static int decode_iq_avx2(const uint8_t *raw, int16_t *iq, size_t samples)
 {
     const __m256i bad_mask = _mm256_set1_epi32((int)0xc000c000u);
@@ -174,17 +181,42 @@ static int decode_iq_avx2(const uint8_t *raw, int16_t *iq, size_t samples)
 static int cpu_has_avx2(void)
 {
     static int cached = -1;
-    if (cached < 0) {
-        __builtin_cpu_init();
-        cached = __builtin_cpu_supports("avx2") ? 1 : 0;
+    if (cached >= 0)
+        return cached;
+#if defined(_MSC_VER)
+    {
+        int regs[4];
+        unsigned __int64 xcr0;
+        __cpuid(regs, 0);
+        if (regs[0] < 7) {
+            cached = 0;
+            return cached;
+        }
+        /* CPUID.1: OSXSAVE and AVX must both be present before any YMM state is allowed. */
+        __cpuid(regs, 1);
+        if (!(regs[2] & (1 << 27)) || !(regs[2] & (1 << 28))) {
+            cached = 0;
+            return cached;
+        }
+        xcr0 = _xgetbv(0);
+        if ((xcr0 & 0x6) != 0x6) {
+            cached = 0;
+            return cached;
+        }
+        __cpuidex(regs, 7, 0);
+        cached = (regs[1] & (1 << 5)) ? 1 : 0;
     }
+#else
+    __builtin_cpu_init();
+    cached = __builtin_cpu_supports("avx2") ? 1 : 0;
+#endif
     return cached;
 }
 #endif
 
 int bs_decode_iq(const uint8_t *raw, int16_t *iq, size_t samples)
 {
-#if (defined(__x86_64__) || defined(__i386__)) && defined(__GNUC__)
+#if defined(BS_AVX2_TARGET)
     if (cpu_has_avx2())
         return decode_iq_avx2(raw, iq, samples);
 #endif

@@ -243,7 +243,11 @@ int bs_reader_take(struct bs_reader *reader, uint8_t *data, size_t *length, unsi
 {
     struct timespec deadline;
     int result = 0;
+#if defined(_MSC_VER)
+    timespec_get(&deadline, TIME_UTC);
+#else
     clock_gettime(CLOCK_REALTIME, &deadline);
+#endif
     deadline.tv_nsec += (long)timeout_ms * 1000000;
     deadline.tv_sec += deadline.tv_nsec / 1000000000;
     deadline.tv_nsec %= 1000000000;

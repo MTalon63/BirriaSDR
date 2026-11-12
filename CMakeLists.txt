@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 project(birriasdr VERSION 0.1.0 LANGUAGES C)
+if(MSVC)
+    # CMake does not pass /std:c11 for this MSVC, and C11 atomics need the switch.
+    add_compile_options(/std:c11 /experimental:c11atomics)
+endif()
 include(GNUInstallDirs)
 include(CTest)
 option(BUILD_SHARED_LIBS "Build a shared library" ON)
@@ -38,6 +42,10 @@ if(BIRRIASDR_SANITIZE)
     target_compile_options(birriasdr_objects PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
 endif()
 add_library(birriasdr $<TARGET_OBJECTS:birriasdr_objects>)
+if(MSVC)
+    # The header has no dllexport macros, so let CMake export every symbol.
+    set_target_properties(birriasdr PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif()
 target_include_directories(birriasdr PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)

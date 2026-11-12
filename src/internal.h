@@ -6,7 +6,11 @@
 
 #include "birriasdr.h"
 #include <libusb.h>
+#if defined(_MSC_VER)
+#include "win32_thread.h"
+#else
 #include <pthread.h>
+#endif
 #include <stdatomic.h>
 #include <stdbool.h>
 
